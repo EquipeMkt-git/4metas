@@ -14,11 +14,22 @@ const aviso    = document.getElementById('aviso');
 
 const NIVEIS = { nao_atingida: 'Não atingida', atingida: 'Atingida', superada: 'Superada' };
 
-const TIPOS = {
-  evolucao: { nome: 'Evolução', dica: 'Avança de 0 a 100% ao longo do período. Ex: construir um sistema.' },
-  numero:   { nome: 'Número',   dica: 'Um valor contra um alvo. Ex: pelo menos 4 testes, ou no máximo 4 bugs.' },
-  analise:  { nome: 'Análise',  dica: 'Não tem número no meio do caminho. Só se conclui depois de verificar.' }
+const MEDIDAS = {
+  marco:      { nome: 'Feito ou não', dica: 'Sem número: ou aconteceu, ou não.' },
+  percentual: { nome: 'Porcentagem',  dica: 'Avança de 0 a 100% ao longo do período.' },
+  numero:     { nome: 'Número',       dica: 'Um valor contra um alvo. Ex: 4 testes, 3 bugs.' },
+  dinheiro:   { nome: 'Dinheiro',     dica: 'Um valor em reais contra um alvo.' }
 };
+
+const brl = (v) => 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** "no máximo R$ 10,00" · "pelo menos 4 testes" · "100%" */
+function alvoTexto(m) {
+  if (m.tipo === 'marco') return 'feito ou não';
+  if (m.tipo === 'percentual') return 'até 100%';
+  const n = m.tipo === 'dinheiro' ? brl(m.alvo) : `${m.alvo}${m.unidade || ''}`;
+  return `${m.sentido === 'max' ? 'no máximo' : 'pelo menos'} ${n}`;
+}
 
 const PERIODICIDADES = [
   ['mensal', 'Mensal'], ['quinzenal', 'Quinzenal'], ['semanal', 'Semanal'],
@@ -482,9 +493,6 @@ function blocoResultado() {
 
 function cartaoRk(rk) {
   const ed = M.pode_editar;
-  const t = TIPOS[rk.tipo] || TIPOS.evolucao;
-  const alvoTxt = rk.tipo === 'numero'
-    ? `${rk.sentido === 'max' ? 'no máximo' : 'pelo menos'} ${esc(rk.alvo)}${esc(rk.unidade || '')}` : '';
 
   return `
     <article class="rk" data-rk="${rk.id}" data-concluido="${rk.concluido ? 1 : 0}">
@@ -492,17 +500,25 @@ function cartaoRk(rk) {
         <div class="rk-cabeca">
           <div class="rk-titulo-linha">
             <h3>${esc(rk.titulo)}</h3>
-            <span class="tag">${t.nome}</span>
             ${rk.concluido ? '<span class="tag tag-ok">Concluído</span>' : ''}
           </div>
-          <p class="rk-sub">${dia(rk.periodo_inicio)} a ${dia(rk.periodo_fim)}${alvoTxt ? ' — ' + alvoTxt : ''}</p>
+          <p class="rk-sub">${dia(rk.periodo_inicio)} a ${dia(rk.periodo_fim)}</p>
         </div>
         ${ed ? `<div class="rk-acoes">
           <button class="btn-link" data-editar-rk="${rk.id}">Editar</button>
           <button class="btn-link link-perigo" data-arquivar-rk="${rk.id}">Arquivar</button></div>` : ''}
       </div>
 
-      <div class="rk-medida">${medida(rk, ed)}</div>
+      <div class="medidas">
+        ${rk.medidas.length
+          ? rk.medidas.map(m => linhaMedida(m, ed)).join('')
+          : '<p class="rk-sub">Sem medidas. Edite o resultado-chave para definir como ele é medido.</p>'}
+      </div>
+
+      <div class="mini mini-rk">
+        <div class="barra"><i style="--pct:${rk.pct}%"></i></div>
+        <span>${rk.pct}% na meta</span>
+      </div>
 
       <div class="rk-notas">
         <div class="campo"><label>O que já foi feito</label>
@@ -534,38 +550,40 @@ function cartaoRk(rk) {
     </article>`;
 }
 
-function medida(rk, ed) {
-  const mini = `<div class="mini"><div class="barra"><i style="--pct:${rk.pct}%"></i></div>
-    <span>${rk.pct}% na meta</span></div>`;
+/** Uma linha de medida dentro do cartão: rótulo, campo de valor, alvo e situação. */
+function linhaMedida(m, ed) {
+  const v = (m.valor_atual === '' || m.valor_atual === null) ? '' : m.valor_atual;
+  let campo, situacao = '';
 
-  if (rk.tipo === 'evolucao') {
-    return `<label class="medida-rotulo">Quanto já evoluiu</label>
-      <div class="medida-linha">
-        ${ed ? `<input type="range" min="0" max="100" step="5" value="${rk.progresso_pct}" data-pct>
-                <output data-pct-saida>${rk.progresso_pct}%</output>`
-             : `<b>${rk.progresso_pct}%</b>`}
-      </div>${mini}`;
-  }
+  if (m.tipo === 'marco') {
+    campo = ed
+      ? `<label class="marco"><input type="checkbox" data-medida="${m.id}" data-tipo="marco" ${Number(v) === 1 ? 'checked' : ''}> feito</label>`
+      : `<b>${Number(v) === 1 ? 'Feito' : 'Ainda não'}</b>`;
+  } else if (m.tipo === 'percentual') {
+    campo = ed
+      ? `<input type="number" class="inp-valor" min="0" max="100" value="${v}" data-medida="${m.id}" data-tipo="percentual"><span class="sufixo">%</span>`
+      : `<b>${v === '' ? '—' : v + '%'}</b>`;
+  } else {
+    const pre = m.tipo === 'dinheiro' ? '<span class="prefixo">R$</span>' : '';
+    campo = ed
+      ? `${pre}<input type="number" class="inp-valor" step="${m.tipo === 'dinheiro' ? '0.01' : '1'}" value="${v}" data-medida="${m.id}" data-tipo="${m.tipo}">
+         ${m.unidade && m.tipo !== 'dinheiro' ? `<span class="sufixo">${esc(m.unidade)}</span>` : ''}`
+      : `<b>${v === '' ? '—' : (m.tipo === 'dinheiro' ? brl(v) : v + (m.unidade || ''))}</b>`;
 
-  if (rk.tipo === 'numero') {
-    const v = rk.valor_atual === '' || rk.valor_atual === null ? '' : Number(rk.valor_atual);
-    let estado = '';
-    if (rk.sentido === 'max' && v !== '') {
-      estado = v <= Number(rk.alvo)
+    if (m.sentido === 'max' && v !== '') {
+      situacao = m.pct === 100
         ? '<span class="chip chip-ok">Dentro do limite</span>'
         : '<span class="chip chip-alerta">Acima do limite</span>';
     }
-    return `<label class="medida-rotulo">Valor atual</label>
-      <div class="medida-linha">
-        ${ed ? `<input type="number" class="inp-valor" value="${v}" data-valor>` : `<b>${v === '' ? '—' : v}</b>`}
-        <span class="rk-sub">${rk.sentido === 'max' ? 'limite: no máximo' : 'de pelo menos'} ${esc(rk.alvo)}${esc(rk.unidade || '')}</span>
-        ${estado}
-      </div>
-      ${rk.sentido === 'max' ? '<p class="campo-dica">Conta na meta quando for marcado como concluído, no fim do período.</p>' : ''}
-      ${mini}`;
   }
 
-  return `<p class="medida-analise">Sem número no meio do caminho: conta na meta quando for concluído, depois da análise.</p>${mini}`;
+  return `
+    <div class="medida" data-pct="${m.pct}">
+      <div class="medida-nome">${esc(m.rotulo)}</div>
+      <div class="medida-campo">${campo}</div>
+      <div class="medida-alvo">${esc(alvoTexto(m))}</div>
+      <div class="medida-fim">${situacao}<span class="medida-pct">${m.pct}%</span></div>
+    </div>`;
 }
 
 function itemHistorico(h) {
@@ -607,10 +625,6 @@ function ligarMeta() {
     } catch (e) { avisar(e.message); }
   }));
 
-  document.querySelectorAll('[data-pct]').forEach(r => r.addEventListener('input', () => {
-    r.parentElement.querySelector('[data-pct-saida]').textContent = r.value + '%';
-  }));
-
   on('[data-editar-rk]', (ev) =>
     formaRk(M.resultados_chave.find(x => x.id === ev.target.dataset.editarRk)));
 
@@ -624,13 +638,15 @@ function ligarMeta() {
     const card = ev.target.closest('.rk');
     const rk = M.resultados_chave.find(x => x.id === ev.target.dataset.registrar);
     const concluido = card.querySelector(`input[name="c-${rk.id}"]:checked`).value === 'sim';
+    const valores = {};
+    card.querySelectorAll('[data-medida]').forEach(el => {
+      valores[el.dataset.medida] = el.dataset.tipo === 'marco' ? (el.checked ? 1 : 0) : el.value;
+    });
     const p = {
-      id: rk.id, concluido,
+      id: rk.id, concluido, valores,
       feito: card.querySelector('[data-feito]').value,
       falta: card.querySelector('[data-falta]').value
     };
-    if (rk.tipo === 'evolucao') p.progresso_pct = Number(card.querySelector('[data-pct]').value);
-    if (rk.tipo === 'numero') p.valor = card.querySelector('[data-valor]').value;
 
     comBotao(ev.target, 'Registrando', async () => {
       try {
@@ -661,35 +677,28 @@ function ligarMeta() {
 
 // --------------------------------------------------------------- formas
 
+let medidasForma = [];
+
 function formaRk(rk) {
   const alvo = document.getElementById('formaRk');
   const c = M.ciclo;
-  const tipo = rk?.tipo || 'evolucao';
+
+  medidasForma = rk && rk.medidas.length
+    ? rk.medidas.map(m => ({ ...m }))
+    : [{ rotulo: '', tipo: 'percentual', sentido: 'min', alvo: '', unidade: '', peso: 1 }];
 
   alvo.innerHTML = `
     <div class="forma">
       <h3>${rk ? 'Editar resultado-chave' : 'Novo resultado-chave'}</h3>
       <div class="campo"><label for="fTitulo">O que precisa acontecer</label>
-        <input id="fTitulo" value="${esc(rk?.titulo || '')}" placeholder="Ex: Entregar o agente de triagem de leads"></div>
+        <input id="fTitulo" value="${esc(rk?.titulo || '')}" placeholder="Ex: Campanha de setembro dentro do custo"></div>
 
-      <div class="campo"><label>Como medir</label>
-        <div class="tipos">${Object.entries(TIPOS).map(([k, v]) => `
-          <label class="tipo-op"><input type="radio" name="fTipo" value="${k}" ${tipo === k ? 'checked' : ''}>
-            <span><b>${v.nome}</b>${v.dica}</span></label>`).join('')}
-        </div></div>
+      <p class="rotulo rotulo-secao">Como este resultado-chave é medido</p>
+      <p class="campo-dica" style="margin:-6px 0 12px">Pode ter mais de uma medida. Ex: custo por lead no máximo R$ 10 e investimento de pelo menos R$ 15 mil. O avanço do resultado-chave é a média delas.</p>
+      <div id="listaMedidas"></div>
+      <button class="btn-link" id="addMedida">Adicionar outra medida</button>
 
-      <div id="fNumero" class="dupla" ${tipo === 'numero' ? '' : 'hidden'}>
-        <div class="campo"><label for="fSentido">Sentido</label>
-          <select id="fSentido">
-            <option value="min" ${rk?.sentido !== 'max' ? 'selected' : ''}>Pelo menos (quanto mais, melhor)</option>
-            <option value="max" ${rk?.sentido === 'max' ? 'selected' : ''}>No máximo (é um limite)</option>
-          </select></div>
-        <div class="campo"><label for="fAlvo">Número alvo</label>
-          <div class="alvo-linha"><input id="fAlvo" type="number" min="0" value="${esc(rk?.alvo || '')}">
-          <input id="fUnid" value="${esc(rk?.unidade || '')}" placeholder="unidade, ex: bugs"></div></div>
-      </div>
-
-      <div class="dupla">
+      <div class="dupla" style="margin-top:22px">
         <div class="campo"><label for="fIni">De</label>
           <input id="fIni" type="date" value="${rk?.periodo_inicio || c.periodo_inicio}" min="${c.periodo_inicio}" max="${c.periodo_fim}"></div>
         <div class="campo"><label for="fFim">Até</label>
@@ -709,28 +718,80 @@ function formaRk(rk) {
         <button class="btn btn-vazio" id="fCancelar">Cancelar</button></div>
     </div>`;
 
+  desenharMedidas();
   alvo.scrollIntoView({ behavior: 'smooth', block: 'start' });
   document.getElementById('fTitulo').focus({ preventScroll: true });
 
-  document.querySelectorAll('input[name="fTipo"]').forEach(r => r.addEventListener('change', () => {
-    document.getElementById('fNumero').hidden = r.value !== 'numero' || !r.checked;
-  }));
+  document.getElementById('addMedida').onclick = () => {
+    guardarMedidas();
+    medidasForma.push({ rotulo: '', tipo: 'numero', sentido: 'min', alvo: '', unidade: '', peso: 1 });
+    desenharMedidas();
+  };
   document.getElementById('fCancelar').onclick = () => { alvo.innerHTML = ''; };
 
   document.getElementById('fSalvar').addEventListener('click', (ev) => comBotao(ev.target, 'Salvando', async () => {
+    guardarMedidas();
     const v = (id) => document.getElementById(id).value.trim();
     try {
       await api('rk.salvar', {
         id: rk?.id, entregavel_id: M.entregavel.id, ciclo_id: c.id,
-        titulo: v('fTitulo'),
-        tipo: document.querySelector('input[name="fTipo"]:checked').value,
-        sentido: v('fSentido'), alvo: v('fAlvo'), unidade: v('fUnid') ? ' ' + v('fUnid') : '',
+        titulo: v('fTitulo'), medidas: medidasForma,
         periodo_inicio: v('fIni'), periodo_fim: v('fFim'),
         peso: v('fPeso'), xp: v('fXp')
       });
       avisar(rk ? 'Resultado-chave atualizado.' : 'Resultado-chave criado.');
       recarregar();
     } catch (e) { avisar(e.message); }
+  }));
+}
+
+/** Lê o que está na tela de volta para o estado, antes de redesenhar. */
+function guardarMedidas() {
+  document.querySelectorAll('[data-linha]').forEach((el, i) => {
+    const g = (sel) => el.querySelector(sel)?.value ?? '';
+    medidasForma[i] = {
+      ...medidasForma[i],
+      rotulo: g('[data-rot]'), tipo: g('[data-tipo]'), sentido: g('[data-sent]'),
+      alvo: g('[data-alvo]'), unidade: g('[data-unid]'), peso: g('[data-peso]') || 1
+    };
+  });
+}
+
+function desenharMedidas() {
+  const box = document.getElementById('listaMedidas');
+  box.innerHTML = medidasForma.map((m, i) => {
+    const numerica = m.tipo === 'numero' || m.tipo === 'dinheiro';
+    return `
+    <div class="medida-forma" data-linha="${i}">
+      <div class="mf-linha1">
+        <input data-rot value="${esc(m.rotulo)}" placeholder="Nome da medida. Ex: custo por lead">
+        <select data-tipo>${Object.entries(MEDIDAS).map(([k, v]) =>
+          `<option value="${k}" ${m.tipo === k ? 'selected' : ''}>${v.nome}</option>`).join('')}</select>
+        <label class="mf-peso">peso <input data-peso type="number" min="1" max="10" value="${m.peso || 1}"></label>
+        ${medidasForma.length > 1 ? `<button class="btn-x btn-x-fixo" data-tirar="${i}">remover</button>` : '<span></span>'}
+      </div>
+      <div class="mf-linha2" ${numerica ? '' : 'hidden'}>
+        <select data-sent>
+          <option value="min" ${m.sentido !== 'max' ? 'selected' : ''}>Pelo menos</option>
+          <option value="max" ${m.sentido === 'max' ? 'selected' : ''}>No máximo</option>
+        </select>
+        <input data-alvo type="number" step="${m.tipo === 'dinheiro' ? '0.01' : '1'}" value="${esc(m.alvo)}" placeholder="alvo">
+        ${m.tipo === 'dinheiro' ? '<span class="mf-fixo">reais</span>'
+          : `<input data-unid value="${esc(m.unidade || '')}" placeholder="unidade, ex: bugs">`}
+      </div>
+      <p class="campo-dica mf-dica">${MEDIDAS[m.tipo]?.dica || ''}</p>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('[data-tipo]').forEach((sel, i) => sel.addEventListener('change', () => {
+    guardarMedidas();
+    if (medidasForma[i].tipo === 'dinheiro') medidasForma[i].unidade = 'R$';
+    desenharMedidas();
+  }));
+  box.querySelectorAll('[data-tirar]').forEach(b => b.addEventListener('click', () => {
+    guardarMedidas();
+    medidasForma.splice(Number(b.dataset.tirar), 1);
+    desenharMedidas();
   }));
 }
 
