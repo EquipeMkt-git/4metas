@@ -615,25 +615,77 @@ a { color: var(--azul); }
 .rk-titulo-linha h3 { margin: 0; }
 .rk-acoes { gap: 16px; }
 
-.rk-medida { padding: 8px 20px 14px 24px; }
-.medida-rotulo { display: block; font-size: 12.5px; font-weight: 600; color: var(--cinza); margin-bottom: 6px; }
-.medida-linha { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-.medida-linha input[type="range"] { flex: 1; max-width: 340px; accent-color: var(--azul); }
-.medida-linha output { font-family: var(--dis); font-weight: 700; font-size: 17px; min-width: 46px; }
-.medida-linha b { font-family: var(--dis); font-size: 18px; }
+/* --------------------------------------------------------------- medidas */
+
+/* Cada medida é uma linha de tabela: nome, valor, alvo, situação.
+   Alinhadas em colunas para ler as três de um golpe de vista. */
+
+.medidas { padding: 6px 20px 2px 24px; }
+.medida {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.3fr) minmax(130px, 1fr) minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 9px 0;
+}
+.medida + .medida { border-top: 1px solid var(--papel); }
+.medida-nome { font-size: 14px; font-weight: 600; }
+.medida-campo { display: flex; align-items: center; gap: 6px; }
+.medida-campo b { font-family: var(--dis); font-size: 17px; }
+.medida-alvo { font-size: 13px; color: var(--cinza); }
+.medida-fim { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+.medida-pct {
+  font-family: var(--dis);
+  font-weight: 700;
+  font-size: 15px;
+  min-width: 42px;
+  text-align: right;
+  color: var(--azul);
+}
+.medida[data-pct="0"] .medida-pct { color: var(--cinza-cl); }
+
+.prefixo, .sufixo { font-size: 13.5px; color: var(--cinza); }
+.marco { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+.marco input { width: 17px; height: 17px; accent-color: var(--azul); }
 .inp-valor {
-  width: 90px;
+  width: 96px;
   padding: 7px 9px;
   border: 1px solid var(--nevoa);
   border-radius: var(--r);
   font: 600 15px var(--txt);
   color: var(--tinta);
+  background: var(--branco);
 }
-.medida-analise { font-size: 14px; color: var(--cinza); margin: 0; }
-
-.mini { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
-.mini .barra { flex: 1; max-width: 340px; margin: 0; }
+.mini { display: flex; align-items: center; gap: 12px; }
+.mini .barra { flex: 1; max-width: 360px; margin: 0; background: var(--papel); }
 .mini span { font-size: 12.5px; color: var(--cinza); white-space: nowrap; }
+.mini-rk { padding: 12px 20px 2px 24px; }
+.rk[data-concluido="1"] .mini .barra { background: #DCE9F5; }
+
+/* medidas no formulário */
+.medida-forma {
+  padding: 12px;
+  background: var(--papel);
+  border-radius: var(--r);
+  margin-bottom: 10px;
+}
+.mf-linha1 { display: grid; grid-template-columns: 1fr 165px 96px 66px; gap: 8px; align-items: center; }
+.mf-linha2 { display: grid; grid-template-columns: 130px 130px 1fr; gap: 8px; align-items: center; margin-top: 8px; }
+.mf-linha2[hidden] { display: none; }
+.medida-forma input, .medida-forma select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--nevoa);
+  border-radius: var(--r);
+  font: 400 14px var(--txt);
+  background: var(--branco);
+  color: var(--tinta);
+}
+.mf-peso { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--cinza); }
+.mf-peso input { width: 56px; }
+.mf-fixo { font-size: 13.5px; color: var(--cinza); }
+.mf-dica { margin: 7px 0 0; }
+.btn-x-fixo { opacity: 1; justify-self: end; }
 
 .rk-notas {
   display: grid;
@@ -814,6 +866,11 @@ a { color: var(--azul); }
   .topo { padding: 12px 18px; }
   .dupla { grid-template-columns: 1fr; }
   .rk-notas { grid-template-columns: 1fr; gap: 0; }
+  .medida { grid-template-columns: 1fr auto; row-gap: 4px; }
+  .medida-alvo { grid-column: 1; }
+  .medida-fim { grid-column: 2; }
+  .mf-linha1 { grid-template-columns: 1fr 1fr; }
+  .mf-linha2 { grid-template-columns: 1fr 1fr; }
   .tipos { grid-template-columns: 1fr; }
   .barra-periodo { flex-direction: column; align-items: flex-start; gap: 12px; }
 }
