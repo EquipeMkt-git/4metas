@@ -100,10 +100,16 @@ function carregando(texto) {
   tela.innerHTML = `<p class="carregando">${esc(texto)}…</p>`;
 }
 
-function mostrarTopo() {
+function mostrarTopo(rotaAtual) {
   const u = sessao.usuario;
   topo.hidden = !u;
-  if (u) topoNome.textContent = u.nome;
+  if (!u) return;
+  topoNome.textContent = u.nome;
+  document.querySelectorAll('#menu a').forEach(a => {
+    const dele = rotaAtual && rotaAtual.indexOf(a.dataset.rota) === 0;
+    if (dele) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  });
 }
 
 /** Trava o botão enquanto a chamada acontece e devolve o texto depois. */
@@ -148,15 +154,17 @@ function telaEntrar(mensagem) {
   });
 }
 
-function telaSenha() {
-  mostrarTopo();
+function telaSenha(primeiroAcesso) {
+  mostrarTopo(primeiroAcesso ? null : '/acesso');
   tela.innerHTML = `
     <div class="entrar">
-      <h1 class="titulo-pagina">Crie sua senha</h1>
-      <p class="linha-fina">Você entrou com a senha inicial. Escolha uma sua para continuar.</p>
+      <h1 class="titulo-pagina">${primeiroAcesso ? 'Crie sua senha' : 'Acesso'}</h1>
+      <p class="linha-fina">${primeiroAcesso
+        ? 'Você entrou com a senha inicial. Escolha uma sua para continuar.'
+        : 'Troque sua senha quando quiser. O e-mail de entrada é ' + esc(sessao.usuario.email || '') + '.'}</p>
       <div id="erroSenha"></div>
       <form id="formSenha" novalidate>
-        <div class="campo"><label for="atual">Senha inicial</label>
+        <div class="campo"><label for="atual">${primeiroAcesso ? 'Senha inicial' : 'Senha atual'}</label>
           <input id="atual" type="password" autocomplete="current-password"></div>
         <div class="campo"><label for="nova">Nova senha</label>
           <input id="nova" type="password" autocomplete="new-password">
@@ -165,7 +173,10 @@ function telaSenha() {
           <input id="conf" type="password" autocomplete="new-password"></div>
         <button class="btn" type="submit">Salvar senha</button>
       </form>
+      ${primeiroAcesso ? '' : '<div id="blocoReset"></div>'}
     </div>`;
+
+  if (!primeiroAcesso) _blocoResetSenha();
 
   document.getElementById('formSenha').addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -180,15 +191,50 @@ function telaSenha() {
       const u = sessao.usuario; u.precisa_trocar_senha = false;
       sessao.abrir(sessao.token, u);
       avisar('Senha salva.');
-      location.hash = '#/painel';
+      if (primeiroAcesso) location.hash = '#/painel';
+      else erro.innerHTML = '';
     } catch (e) { erro.innerHTML = `<div class="erro">${esc(e.message)}</div>`; }
   });
+}
+
+/**
+ * Reset de senha de outra pessoa, só para coordenador e diretor.
+ * Aparece dentro da tela de Acesso; quem não é gestor nem enxerga.
+ */
+async function _blocoResetSenha() {
+  let pessoas = [];
+  try { pessoas = await api('catalogo.usuarios'); } catch { return; }
+  if (pessoas.length < 2) return;
+
+  const eu = sessao.usuario;
+  const alvo = document.getElementById('blocoReset');
+  if (!alvo) return;
+
+  alvo.innerHTML = `
+    <div class="forma" style="margin-top:28px">
+      <h3>Resetar a senha de alguém</h3>
+      <p class="rk-sub" style="margin-bottom:14px">Gera uma senha temporária e obriga a pessoa a criar outra no próximo acesso. Passe por canal direto, nunca em grupo.</p>
+      <div class="campo"><label for="rQuem">Pessoa</label>
+        <select id="rQuem">${pessoas.filter(p => p.id !== eu.id)
+          .map(p => `<option value="${p.id}">${esc(p.nome)}</option>`).join('')}</select></div>
+      <div class="forma-pe"><button class="btn btn-vazio" id="rGerar">Gerar senha temporária</button></div>
+      <div id="rSaida"></div>
+    </div>`;
+
+  document.getElementById('rGerar').addEventListener('click', (ev) => comBotao(ev.target, 'Gerando', async () => {
+    try {
+      const r = await api('auth.resetarSenha', { usuario_id: document.getElementById('rQuem').value });
+      document.getElementById('rSaida').innerHTML =
+        `<div class="senha-temp">Senha temporária: <code>${esc(r.senha_temporaria)}</code>
+         <span>Aparece uma vez só. Copie agora.</span></div>`;
+    } catch (e) { avisar(e.message); }
+  }));
 }
 
 // ------------------------------------------------------------------ painel
 
 async function telaPainel() {
-  mostrarTopo();
+  mostrarTopo('/painel');
   carregando('Abrindo seu painel');
 
   let d;
@@ -306,11 +352,12 @@ function editorPeriodo(alvo, cicloId, ini, fim, depois) {
 // ------------------------------------------------------------ novo entregável
 
 async function telaNovo() {
-  mostrarTopo();
+  mostrarTopo('/painel');
   carregando('Preparando');
 
-  let pessoas = [];
-  try { pessoas = await api('catalogo.usuarios'); } catch { }
+  let pessoas = [], bases = [];
+  try { [pessoas, bases] = await Promise.all([api('catalogo.usuarios'), api('entregavel.bases')]); }
+  catch { }
   const eu = sessao.usuario;
   const mes = mesAtual();
 
@@ -318,7 +365,21 @@ async function telaNovo() {
     <a class="voltar" href="#/painel">Voltar ao painel</a>
     <div class="pagina-forma">
       <h1 class="titulo-pagina">Novo entregável</h1>
-      <p class="linha-fina">Depois de criar, você adiciona os resultados-chave e a rotina de cada um.</p>
+      <p class="linha-fina">Comece do zero ou aproveite a estrutura de um que já existe.</p>
+
+      <div class="campo"><label>Como começar</label>
+        <div class="tipos tipos-2">
+          <label class="tipo-op"><input type="radio" name="nModo" value="zero" checked>
+            <span><b>Do zero</b>Você escreve tudo: descrição, objetivo, como é medido e os três níveis.</span></label>
+          <label class="tipo-op"><input type="radio" name="nModo" value="base" ${bases.length ? '' : 'disabled'}>
+            <span><b>A partir de um existente</b>Copia descrição, objetivo, os três níveis, os resultados-chave com suas medidas e a rotina. Sem nenhum valor lançado.</span></label>
+        </div>
+      </div>
+
+      <div class="campo" id="blocoBase" hidden><label for="nBase">Copiar de</label>
+        <select id="nBase">${bases.map(b =>
+          `<option value="${b.id}">${esc(b.nome)}</option>`).join('')}</select>
+        <p class="campo-dica">Vem a estrutura inteira. Avanço, check-ins e valores das medidas começam zerados.</p></div>
 
       ${pessoas.length > 1 ? `
       <div class="campo"><label for="nResp">Responsável</label>
@@ -326,25 +387,37 @@ async function telaNovo() {
           `<option value="${p.id}" ${p.id === eu.id ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}
         </select></div>` : ''}
 
+      ${existentes.length ? `
+      <div class="campo"><label for="nBase">Começar a partir de</label>
+        <select id="nBase">
+          <option value="">Do zero</option>
+          ${existentes.map(e => `<option value="${e.id}">${esc(e.nome)}</option>`).join('')}
+        </select>
+        <p class="campo-dica">Traz os resultados-chave, as medidas e a rotina do entregável escolhido, sem nenhum valor lançado. Os textos abaixo você escreve do jeito que quiser.</p>
+      </div>` : ''}
+
       <div class="campo"><label for="nNome">Nome</label>
         <input id="nNome" placeholder="Ex: MKT - Migração do CRM"></div>
-      <div class="campo"><label for="nDesc">Descrição</label>
-        <textarea id="nDesc" rows="3" placeholder="O que é este entregável e o que envolve"></textarea></div>
-      <div class="campo"><label for="nObj">Objetivo</label>
-        <textarea id="nObj" rows="2" placeholder="Por que ele existe, qual resultado para a empresa"></textarea></div>
-      <div class="campo"><label for="nForm">Como é medido</label>
-        <textarea id="nForm" rows="2" placeholder="A fórmula ou o critério de medição"></textarea></div>
 
-      <p class="rotulo rotulo-secao">Os três níveis</p>
-      <div class="niveis-forma">
-        <div class="campo nivel-campo" data-nivel="nao_atingida"><label for="nN0">Não atingida</label>
-          <textarea id="nN0" rows="2"></textarea></div>
-        <div class="campo nivel-campo" data-nivel="atingida"><label for="nN1">Atingida</label>
-          <textarea id="nN1" rows="2"></textarea></div>
-        <div class="campo nivel-campo" data-nivel="superada"><label for="nN2">Superada</label>
-          <textarea id="nN2" rows="2"></textarea></div>
+      <div id="camposDoZero">
+        <div class="campo"><label for="nDesc">Descrição</label>
+          <textarea id="nDesc" rows="3" placeholder="O que é este entregável e o que envolve"></textarea></div>
+        <div class="campo"><label for="nObj">Objetivo</label>
+          <textarea id="nObj" rows="2" placeholder="Por que ele existe, qual resultado para a empresa"></textarea></div>
+        <div class="campo"><label for="nForm">Como é medido</label>
+          <textarea id="nForm" rows="2" placeholder="A fórmula ou o critério de medição"></textarea></div>
+
+        <p class="rotulo rotulo-secao">Os três níveis</p>
+        <div class="niveis-forma">
+          <div class="campo nivel-campo" data-nivel="nao_atingida"><label for="nN0">Não atingida</label>
+            <textarea id="nN0" rows="2"></textarea></div>
+          <div class="campo nivel-campo" data-nivel="atingida"><label for="nN1">Atingida</label>
+            <textarea id="nN1" rows="2"></textarea></div>
+          <div class="campo nivel-campo" data-nivel="superada"><label for="nN2">Superada</label>
+            <textarea id="nN2" rows="2"></textarea></div>
+        </div>
+        <p class="campo-dica">Como os níveis são escritos em texto, o resultado será declarado ao fim do período, com uma justificativa.</p>
       </div>
-      <p class="campo-dica">Como os níveis são escritos em texto, o resultado deste entregável será declarado ao fim do período, com uma justificativa.</p>
 
       <p class="rotulo rotulo-secao">Período em análise</p>
       <div class="dupla">
@@ -361,16 +434,37 @@ async function telaNovo() {
         <a class="btn btn-vazio" href="#/painel">Cancelar</a></div>
     </div>`;
 
+  const modo = () => document.querySelector('input[name="nModo"]:checked').value;
+  const aplicarModo = () => {
+    const base = modo() === 'base';
+    document.getElementById('blocoBase').hidden = !base;
+    document.getElementById('camposDoZero').hidden = base;
+    if (base && !document.getElementById('nNome').value) {
+      const sel = document.getElementById('nBase');
+      document.getElementById('nNome').value = sel.options[sel.selectedIndex]?.text || '';
+    }
+  };
+  document.querySelectorAll('input[name="nModo"]').forEach(r => r.addEventListener('change', aplicarModo));
+  document.getElementById('nBase')?.addEventListener('change', (ev) => {
+    document.getElementById('nNome').value = ev.target.options[ev.target.selectedIndex].text;
+  });
+
   document.getElementById('nSalvar').addEventListener('click', (ev) => comBotao(ev.target, 'Criando', async () => {
     const v = (id) => (document.getElementById(id)?.value || '').trim();
     try {
-      const r = await api('entregavel.criar', {
-        usuario_id: v('nResp') || eu.id,
-        nome: v('nNome'), descricao: v('nDesc'), objetivo: v('nObj'), formula_texto: v('nForm'),
-        nao_atingida: v('nN0'), atingida: v('nN1'), superada: v('nN2'),
+      const comum = {
+        usuario_id: v('nResp') || eu.id, nome: v('nNome'),
         inicio: v('nIni'), fim: v('nFim'), periodicidade: v('nPer')
-      });
-      avisar('Entregável criado. Agora adicione os resultados-chave.');
+      };
+      const r = modo() === 'base'
+        ? await api('entregavel.duplicar', { ...comum, entregavel_id: v('nBase') })
+        : await api('entregavel.criar', { ...comum,
+            descricao: v('nDesc'), objetivo: v('nObj'), formula_texto: v('nForm'),
+            nao_atingida: v('nN0'), atingida: v('nN1'), superada: v('nN2') });
+
+      avisar(r.rks_copiados
+        ? `Entregável criado com ${r.rks_copiados} resultado(s)-chave copiados.`
+        : 'Entregável criado. Agora adicione os resultados-chave.');
       location.hash = `#/meta/${r.id}`;
     } catch (e) {
       document.getElementById('nErro').innerHTML = `<div class="erro">${esc(e.message)}</div>`;
@@ -384,7 +478,7 @@ let M = null;          // estado da tela aberta
 let rotaMeta = null;   // { id, ciclo }
 
 async function telaMeta(id, cicloId, silencioso) {
-  mostrarTopo();
+  mostrarTopo('/painel');
   rotaMeta = { id, ciclo: cicloId || null };
   const y = window.scrollY;
   if (!silencioso) carregando('Abrindo o entregável');
@@ -448,6 +542,8 @@ function desenharMeta() {
           <div class="barra-legenda"><span>Execução ${c.progresso_pct}%</span><span>${c.xp_total} pontos</span></div>
         </div>` : ''}
 
+        ${blocoIndicadores()}
+
         <div class="cabeca-secao">
           <h2>Resultados-chave</h2>
           ${M.pode_editar ? '<button class="btn btn-vazio btn-p" id="btnNovoRk">Adicionar</button>' : ''}
@@ -462,7 +558,7 @@ function desenharMeta() {
                 ? '<div style="margin-top:14px"><button class="btn btn-vazio btn-p" id="btnCopiar">Trazer os do período anterior</button></div>' : ''}
             </div>`}
 
-        <div class="cabeca-secao cabeca-historico"><h2>Histórico do período</h2></div>
+        <div class="cabeca-secao cabeca-historico"><h2>Check-ins do período</h2></div>
         ${M.historico.length ? `<ol class="linha-tempo">${M.historico.map(itemHistorico).join('')}</ol>`
           : '<p class="rk-sub">Cada vez que alguém registra uma atualização num resultado-chave, ela aparece aqui.</p>'}
       </section>
@@ -491,6 +587,115 @@ function blocoResultado() {
     </div>`;
 }
 
+const TIPOS_EVIDENCIA = {
+  teste_ab: 'Teste A/B', link: 'Link', mensagem: 'Mensagem', nota: 'Nota'
+};
+
+/** Os números do período: valor corrente, lançamento e como está a avaliação. */
+function blocoIndicadores() {
+  if (!M.indicadores || !M.indicadores.length) return '';
+  const ed = M.pode_lancar;
+
+  return `
+    <div class="cabeca-secao"><h2>Indicadores do período</h2></div>
+    <div class="indicadores">
+      ${M.indicadores.map(m => `
+        <div class="ind">
+          <div class="ind-nome">${esc(m.rotulo)}</div>
+          <div class="ind-valor">${m.valor_atual === null ? '<span class="rk-sub">não lançado</span>'
+            : `<b>${esc(String(m.valor_atual))}</b><span class="ind-un">${esc(m.unidade || '')}</span>`}</div>
+          ${ed ? `<div class="ind-lanca">
+            <input type="number" step="any" placeholder="novo valor" data-ind="${m.id}">
+            <button class="btn btn-vazio btn-p" data-lancar="${m.id}">Lançar</button>
+          </div>` : '<div></div>'}
+          <div class="ind-hist">${m.lancamentos.length
+            ? `<button class="btn-link" data-hist="${m.id}">${m.lancamentos.length} lançamento${m.lancamentos.length > 1 ? 's' : ''}</button>`
+            : ''}</div>
+          <div class="ind-lista" id="hist-${m.id}" hidden>
+            ${m.lancamentos.slice().reverse().map(l => `
+              <div class="ind-linha">
+                <span>${esc(String(l.valor))}</span>
+                <span class="rk-sub">${dia(l.data)} por ${esc(l.por)}</span>
+                ${ed ? `<button class="btn-x btn-x-fixo" data-apagar-lanc="${l.id}">apagar</button>` : ''}
+              </div>`).join('')}
+          </div>
+        </div>`).join('')}
+    </div>
+    ${blocoAvaliacao()}`;
+}
+
+/** Qual condição da meta passou e qual não, com valor ao lado do alvo. */
+function blocoAvaliacao() {
+  if (!M.tem_regra || !M.avaliacao || !M.avaliacao.detalhe) return '';
+
+  const linhas = [];
+  ['atingida', 'superada'].forEach(nivel => {
+    const d = M.avaliacao.detalhe.find(x => x.nivel === nivel);
+    if (!d) return;
+    linhas.push(`<div class="aval-nivel" data-passou="${d.passou ? 1 : 0}">
+      <span class="aval-titulo">${NIVEIS[nivel]}</span>
+      ${d.condicoes.map(c => {
+        const ind = (M.indicadores || []).find(i => i.chave === c.metrica);
+        const nome = ind ? ind.rotulo : c.metrica;
+        const alvo = (c.alvo === null || c.alvo === undefined || String(c.alvo) === 'null')
+          ? 'sem ciclo anterior para comparar'
+          : `${esc(c.op)} ${esc(String(c.alvo))}`;
+        return `<div class="aval-cond" data-passou="${c.passou ? 1 : 0}">
+          <span class="aval-marca">${c.passou ? '✓' : '✗'}</span>
+          <span class="aval-nome">${esc(nome)}</span>
+          <span class="rk-sub">${c.valor === null ? 'ainda sem valor' : esc(String(c.valor))} ${alvo}</span>
+        </div>`;
+      }).join('')}
+    </div>`);
+  });
+
+  return `<div class="avaliacao">
+    <p class="rotulo">Como está a avaliação</p>
+    ${linhas.join('')}
+  </div>`;
+}
+
+/** Testes A/B, links, mensagens e notas do período. */
+function blocoEvidencias() {
+  const ed = M.pode_lancar;
+  const lista = M.evidencias || [];
+
+  return `
+    <div class="cabeca-secao cabeca-evidencias">
+      <h2>Evidências</h2>
+      ${ed ? '<button class="btn btn-vazio btn-p" id="btnNovaEv">Registrar</button>' : ''}
+    </div>
+    <div id="formaEv"></div>
+    ${lista.length ? `<div class="evidencias">
+      ${lista.map(r => `
+        <div class="ev">
+          <div class="ev-topo">
+            <span class="tag">${TIPOS_EVIDENCIA[r.tipo] || 'Nota'}</span>
+            <b>${esc(r.titulo)}</b>
+            <span class="rk-sub">${dia(r.data)} por ${esc(r.por)}</span>
+            ${ed ? `<button class="btn-link link-perigo ev-x" data-apagar-ev="${r.id}">Excluir</button>` : ''}
+          </div>
+          ${r.conteudo ? `<p class="ev-txt">${esc(r.conteudo)}</p>` : ''}
+          ${r.resultado ? `<p class="ev-txt"><span class="lt-rot">Resultado</span>${esc(r.resultado)}</p>` : ''}
+          ${r.url ? `<a class="ev-link" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a>` : ''}
+        </div>`).join('')}
+    </div>` : `<p class="rk-sub">Nenhuma evidência neste período. ${ed ? 'Registre testes A/B, links e mensagens disparadas para comprovar o que foi feito.' : ''}</p>`}`;
+}
+
+/** Lê o que está digitado num cartão de resultado-chave. */
+function _dadosDoCartao(card, id) {
+  const valores = {};
+  card.querySelectorAll('[data-medida]').forEach(el => {
+    valores[el.dataset.medida] = el.dataset.tipo === 'marco' ? (el.checked ? 1 : 0) : el.value;
+  });
+  return {
+    id: id,
+    valores: valores,
+    feito: card.querySelector('[data-feito]')?.value || '',
+    falta: card.querySelector('[data-falta]')?.value || ''
+  };
+}
+
 function cartaoRk(rk) {
   const ed = M.pode_editar;
 
@@ -503,10 +708,15 @@ function cartaoRk(rk) {
             ${rk.concluido ? '<span class="tag tag-ok">Concluído</span>' : ''}
           </div>
           <p class="rk-sub">${dia(rk.periodo_inicio)} a ${dia(rk.periodo_fim)}</p>
+          ${rk.tags && rk.tags.length ? `<div class="chips">${rk.tags.map(t =>
+            `<span class="chip-tag" data-tipo="${t.tipo}">${esc(t.nome)}</span>`).join('')}</div>` : ''}
         </div>
         ${ed ? `<div class="rk-acoes">
           <button class="btn-link" data-editar-rk="${rk.id}">Editar</button>
-          <button class="btn-link link-perigo" data-arquivar-rk="${rk.id}">Arquivar</button></div>` : ''}
+          ${rk.pode_excluir
+            ? `<button class="btn-link link-perigo" data-excluir-rk="${rk.id}">Excluir</button>`
+            : `<button class="btn-link link-perigo" data-arquivar-rk="${rk.id}">Arquivar</button>`}
+          </div>` : ''}
       </div>
 
       <div class="medidas">
@@ -535,7 +745,7 @@ function cartaoRk(rk) {
           <label><input type="radio" name="c-${rk.id}" value="nao" ${rk.concluido ? '' : 'checked'}><span>Não</span></label>
           <label><input type="radio" name="c-${rk.id}" value="sim" ${rk.concluido ? 'checked' : ''}><span>Sim</span></label>
         </div>
-        <button class="btn btn-p" data-registrar="${rk.id}">Registrar atualização</button>
+        <button class="btn btn-p" data-registrar="${rk.id}">Registrar check-in</button>
       </div>` : ''}
 
       <div class="rotina">
@@ -614,6 +824,38 @@ function ligarMeta() {
     editorPeriodo($('#edPeriodo'), M.ciclo.id, M.ciclo.periodo_inicio, M.ciclo.periodo_fim, recarregar));
 
   $('#btnNovoPer')?.addEventListener('click', formaNovoPeriodo);
+
+  on('[data-lancar]', (ev) => {
+    const id = ev.target.dataset.lancar;
+    const campo = document.querySelector(`[data-ind="${id}"]`);
+    if (!campo.value.trim()) { avisar('Digite o valor antes de lançar.'); return; }
+    comBotao(ev.target, 'Lançando', async () => {
+      try {
+        await api('metrica.lancar', { ciclo_id: M.ciclo.id, metrica_id: id, valor: campo.value });
+        avisar('Indicador lançado.');
+        recarregar();
+      } catch (e) { avisar(e.message); }
+    });
+  });
+
+  on('[data-hist]', (ev) => {
+    const box = document.getElementById('hist-' + ev.target.dataset.hist);
+    box.hidden = !box.hidden;
+  });
+
+  on('[data-apagar-lanc]', async (ev) => {
+    if (!confirm('Apagar este lançamento? O valor anterior volta a valer.')) return;
+    try { await api('metrica.excluirLancamento', { id: ev.target.dataset.apagarLanc }); recarregar(); }
+    catch (e) { avisar(e.message); }
+  });
+
+  $('#btnNovaEv')?.addEventListener('click', formaEvidencia);
+
+  on('[data-apagar-ev]', async (ev) => {
+    if (!confirm('Excluir esta evidência?')) return;
+    try { await api('registro.excluir', { id: ev.target.dataset.apagarEv }); avisar('Evidência excluída.'); recarregar(); }
+    catch (e) { avisar(e.message); }
+  });
   $('#btnNovoRk')?.addEventListener('click', () => formaRk());
   $('#btnDeclarar')?.addEventListener('click', formaDeclarar);
 
@@ -628,11 +870,48 @@ function ligarMeta() {
   on('[data-editar-rk]', (ev) =>
     formaRk(M.resultados_chave.find(x => x.id === ev.target.dataset.editarRk)));
 
-  on('[data-arquivar-rk]', async (ev) => {
-    if (!confirm('Arquivar este resultado-chave? Ele sai deste período, mas o que foi registrado continua no histórico.')) return;
-    try { await api('rk.arquivar', { id: ev.target.dataset.arquivarRk }); avisar('Resultado-chave arquivado.'); recarregar(); }
+  const tirarRk = (id) => {
+    M.resultados_chave = M.resultados_chave.filter(x => x.id !== id);
+    desenharMeta();
+  };
+
+  on('[data-excluir-rk]', async (ev) => {
+    if (!confirm('Excluir este resultado-chave de vez? Só é possível porque nada foi registrado nele ainda.')) return;
+    try { await api('rk.excluir', { id: ev.target.dataset.excluirRk }); avisar('Resultado-chave excluído.'); recarregar(); }
     catch (e) { avisar(e.message); }
   });
+
+  on('[data-arquivar-rk]', async (ev) => {
+    if (!confirm('Arquivar este resultado-chave? Ele sai deste período, mas os check-ins continuam no histórico.')) return;
+    const id = ev.target.dataset.arquivarRk;
+    try { await api('rk.arquivar', { id }); avisar('Resultado-chave arquivado.'); tirarRk(id); }
+    catch (e) { avisar(e.message); }
+  });
+
+  on('[data-excluir-rk]', async (ev) => {
+    if (!confirm('Excluir este resultado-chave de vez? Ele nunca teve check-in, então nada de histórico se perde.')) return;
+    const id = ev.target.dataset.excluirRk;
+    try { await api('rk.excluir', { id }); avisar('Resultado-chave excluído.'); tirarRk(id); }
+    catch (e) { avisar(e.message); }
+  });
+
+  /**
+   * Concluir é uma decisão, não um rascunho: salva no clique.
+   * Leva junto o que estiver escrito no cartão, para nada se perder.
+   */
+  document.querySelectorAll('.seg input[type="radio"]').forEach(r =>
+    r.addEventListener('change', async () => {
+      const card = r.closest('.rk');
+      const id = card.dataset.rk;
+      try {
+        await api('rk.atualizar', Object.assign(_dadosDoCartao(card, id), { concluido: r.value === 'sim' }));
+        avisar(r.value === 'sim' ? 'Resultado-chave concluído.' : 'Marcação desfeita.');
+        recarregar();
+      } catch (e) {
+        avisar(e.message);
+        recarregar();
+      }
+    }));
 
   on('[data-registrar]', (ev) => {
     const card = ev.target.closest('.rk');
@@ -650,9 +929,30 @@ function ligarMeta() {
 
     comBotao(ev.target, 'Registrando', async () => {
       try {
-        await api('rk.atualizar', p);
-        avisar(concluido && !rk.concluido ? 'Resultado-chave concluído.' : 'Atualização registrada no histórico.');
-        recarregar();
+        const r = await api('rk.atualizar', p);
+        avisar(concluido && !rk.concluido ? 'Resultado-chave concluído.' : 'Check-in registrado.');
+
+        // A resposta já traz o estado novo: a tela se corrige sozinha, sem
+        // buscar o entregável inteiro de novo.
+        rk.feito = p.feito; rk.falta = p.falta;
+        rk.concluido = concluido; rk.pct = r.rk_pct; rk.pode_excluir = false;
+        (r.medidas || []).forEach(nm => {
+          const m = rk.medidas.find(x => x.id === nm.id);
+          if (m) { m.valor_atual = nm.valor_atual; m.pct = nm.pct; }
+        });
+        M.ciclo.progresso_pct = r.progresso_pct;
+        M.ciclo.xp_total = r.xp_total;
+        M.ciclo.resultado_nivel = r.resultado_nivel;
+        M.historico.unshift({
+          rk_titulo: rk.titulo, quando: new Date().toISOString(),
+          feito: p.feito, falta: p.falta,
+          valor: rk.medidas.filter(m => m.valor_atual !== '' && m.valor_atual !== null)
+            .map(m => m.rotulo + ': ' + (m.tipo === 'dinheiro' ? brl(m.valor_atual)
+              : m.tipo === 'marco' ? (Number(m.valor_atual) === 1 ? 'feito' : 'não')
+              : m.valor_atual + (m.tipo === 'percentual' ? '%' : (m.unidade || '')))).join(' · '),
+          progresso_pct: r.rk_pct, concluido
+        });
+        desenharMeta();
       } catch (e) { avisar(e.message); }
     });
   });
@@ -661,8 +961,11 @@ function ligarMeta() {
     const inp = document.querySelector(`[data-novo-item="${rkId}"]`);
     const titulo = inp.value.trim();
     if (!titulo) return;
-    try { await api('rotina.salvar', { resultado_chave_id: rkId, titulo }); recarregar(); }
-    catch (e) { avisar(e.message); }
+    try {
+      const r = await api('rotina.salvar', { resultado_chave_id: rkId, titulo });
+      M.resultados_chave.find(x => x.id === rkId).rotina.push({ id: r.id, titulo });
+      desenharMeta();
+    } catch (e) { avisar(e.message); }
   };
   on('[data-add-item]', (ev) => addItem(ev.target.dataset.addItem));
   document.querySelectorAll('[data-novo-item]').forEach(i => i.addEventListener('keydown', (ev) => {
@@ -670,19 +973,25 @@ function ligarMeta() {
   }));
 
   on('[data-tirar-item]', async (ev) => {
-    try { await api('rotina.arquivar', { id: ev.target.dataset.tirarItem }); recarregar(); }
-    catch (e) { avisar(e.message); }
+    const id = ev.target.dataset.tirarItem;
+    try {
+      await api('rotina.arquivar', { id });
+      M.resultados_chave.forEach(rk => { rk.rotina = rk.rotina.filter(r => r.id !== id); });
+      desenharMeta();
+    } catch (e) { avisar(e.message); }
   });
 }
 
 // --------------------------------------------------------------- formas
 
 let medidasForma = [];
+let tagsForma = [];
 
 function formaRk(rk) {
   const alvo = document.getElementById('formaRk');
   const c = M.ciclo;
 
+  tagsForma = rk && rk.tags ? rk.tags.map(t => t.id) : [];
   medidasForma = rk && rk.medidas.length
     ? rk.medidas.map(m => ({ ...m }))
     : [{ rotulo: '', tipo: 'percentual', sentido: 'min', alvo: '', unidade: '', peso: 1 }];
@@ -697,6 +1006,10 @@ function formaRk(rk) {
       <p class="campo-dica" style="margin:-6px 0 12px">Pode ter mais de uma medida. Ex: custo por lead no máximo R$ 10 e investimento de pelo menos R$ 15 mil. O avanço do resultado-chave é a média delas.</p>
       <div id="listaMedidas"></div>
       <button class="btn-link" id="addMedida">Adicionar outra medida</button>
+
+      <p class="rotulo rotulo-secao">Tags</p>
+      <p class="campo-dica" style="margin:-6px 0 12px">Duas camadas, ambas com escolha múltipla. Clique para marcar e desmarcar.</p>
+      <div id="tagsForma"></div>
 
       <div class="dupla" style="margin-top:22px">
         <div class="campo"><label for="fIni">De</label>
@@ -719,6 +1032,7 @@ function formaRk(rk) {
     </div>`;
 
   desenharMedidas();
+  desenharTags();
   alvo.scrollIntoView({ behavior: 'smooth', block: 'start' });
   document.getElementById('fTitulo').focus({ preventScroll: true });
 
@@ -733,12 +1047,13 @@ function formaRk(rk) {
     guardarMedidas();
     const v = (id) => document.getElementById(id).value.trim();
     try {
-      await api('rk.salvar', {
+      const salvo = await api('rk.salvar', {
         id: rk?.id, entregavel_id: M.entregavel.id, ciclo_id: c.id,
         titulo: v('fTitulo'), medidas: medidasForma,
         periodo_inicio: v('fIni'), periodo_fim: v('fFim'),
         peso: v('fPeso'), xp: v('fXp')
       });
+      await api('rk.tags', { resultado_chave_id: salvo.id, tag_ids: tagsForma });
       avisar(rk ? 'Resultado-chave atualizado.' : 'Resultado-chave criado.');
       recarregar();
     } catch (e) { avisar(e.message); }
@@ -755,6 +1070,51 @@ function guardarMedidas() {
       alvo: g('[data-alvo]'), unidade: g('[data-unid]'), peso: g('[data-peso]') || 1
     };
   });
+}
+
+function desenharTags() {
+  const box = document.getElementById('tagsForma');
+  if (!box) return;
+  const cat = M.catalogo_tags || { produto: [], funil: [] };
+
+  const grupo = (titulo, lista, tipo) => `
+    <div class="tag-grupo">
+      <p class="tag-grupo-nome">${titulo}</p>
+      <div class="chips">
+        ${lista.map(t => `<button type="button" class="chip-sel" data-tag="${t.id}"
+          data-tipo="${t.tipo}" data-on="${tagsForma.includes(t.id) ? 1 : 0}">${esc(t.nome)}</button>`).join('')}
+      </div>
+      <div class="nova-tag">
+        <input placeholder="Criar tag de ${titulo.toLowerCase()}" data-nova="${tipo}">
+        <button type="button" class="btn-link" data-criar="${tipo}">Criar</button>
+      </div>
+    </div>`;
+
+  box.innerHTML = grupo('Produto ou campanha', cat.produto, 'produto') +
+                  grupo('Etapa do funil', cat.funil, 'funil');
+
+  box.querySelectorAll('[data-tag]').forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.tag;
+    const i = tagsForma.indexOf(id);
+    if (i >= 0) tagsForma.splice(i, 1); else tagsForma.push(id);
+    b.dataset.on = i >= 0 ? '0' : '1';
+  }));
+
+  box.querySelectorAll('[data-criar]').forEach(b => b.addEventListener('click', async () => {
+    const tipo = b.dataset.criar;
+    const campo = box.querySelector(`[data-nova="${tipo}"]`);
+    const nome = campo.value.trim();
+    if (!nome) return;
+    try {
+      const r = await api('tag.criar', { tipo, nome });
+      const cat = M.catalogo_tags[tipo === 'funil' ? 'funil' : 'produto'];
+      if (!cat.some(t => t.id === r.id)) cat.push({ id: r.id, nome, tipo });
+      if (!tagsForma.includes(r.id)) tagsForma.push(r.id);
+      campo.value = '';
+      desenharTags();
+      avisar(r.ja_existia ? 'Essa tag já existia e foi marcada.' : 'Tag criada e marcada.');
+    } catch (e) { avisar(e.message); }
+  }));
 }
 
 function desenharMedidas() {
@@ -792,6 +1152,45 @@ function desenharMedidas() {
     guardarMedidas();
     medidasForma.splice(Number(b.dataset.tirar), 1);
     desenharMedidas();
+  }));
+}
+
+function formaEvidencia() {
+  const alvo = document.getElementById('formaEv');
+  alvo.innerHTML = `
+    <div class="forma">
+      <h3>Registrar evidência</h3>
+      <div class="dupla">
+        <div class="campo"><label for="evTipo">Tipo</label>
+          <select id="evTipo">${Object.entries(TIPOS_EVIDENCIA)
+            .map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
+        <div class="campo"><label for="evData">Data</label>
+          <input id="evData" type="date" value="${hojeIso()}"></div>
+      </div>
+      <div class="campo"><label for="evTitulo">Título</label>
+        <input id="evTitulo" placeholder="Ex: Teste de criativo, vídeo contra estático"></div>
+      <div class="campo"><label for="evConteudo">O que foi testado ou feito</label>
+        <textarea id="evConteudo" rows="2"></textarea></div>
+      <div class="campo"><label for="evResultado">Resultado</label>
+        <textarea id="evResultado" rows="2" placeholder="O que o teste mostrou"></textarea></div>
+      <div class="campo"><label for="evUrl">Link</label>
+        <input id="evUrl" type="url" placeholder="Opcional"></div>
+      <div class="forma-pe"><button class="btn" id="evSalvar">Salvar</button>
+        <button class="btn btn-vazio" id="evCancelar">Cancelar</button></div>
+    </div>`;
+
+  document.getElementById('evTitulo').focus();
+  document.getElementById('evCancelar').onclick = () => { alvo.innerHTML = ''; };
+  document.getElementById('evSalvar').addEventListener('click', (ev) => comBotao(ev.target, 'Salvando', async () => {
+    const v = (id) => document.getElementById(id).value.trim();
+    try {
+      await api('registro.salvar', {
+        ciclo_id: M.ciclo.id, tipo: v('evTipo'), titulo: v('evTitulo'),
+        conteudo: v('evConteudo'), resultado: v('evResultado'), url: v('evUrl'), data: v('evData')
+      });
+      avisar('Evidência registrada.');
+      recarregar();
+    } catch (e) { avisar(e.message); }
   }));
 }
 
@@ -856,6 +1255,91 @@ function formaDeclarar() {
   }));
 }
 
+// ------------------------------------------------ meus resultados-chave
+
+async function telaResultados() {
+  mostrarTopo('/resultados');
+  carregando('Reunindo seus resultados-chave');
+
+  let d;
+  try { d = await api('meus.resultados'); }
+  catch (e) { tela.innerHTML = `<div class="erro">${esc(e.message)}</div>`; return; }
+
+  const abertos = d.resultados.filter(r => !r.concluido);
+  const prontos = d.resultados.filter(r => r.concluido);
+
+  tela.innerHTML = `
+    <h1 class="titulo-pagina">Seus resultados-chave</h1>
+    <p class="linha-fina">Tudo que está em andamento agora, atravessando os entregáveis.</p>
+    ${d.resultados.length ? `
+      ${abertos.length ? `<div class="grupo-dia"><h3>Em andamento — ${abertos.length}</h3>
+        <div class="lista-rk">${abertos.map(cartaoLista).join('')}</div></div>` : ''}
+      ${prontos.length ? `<div class="grupo-dia"><h3>Concluídos — ${prontos.length}</h3>
+        <div class="lista-rk">${prontos.map(cartaoLista).join('')}</div></div>` : ''}`
+      : '<div class="vazio">Nenhum resultado-chave em período aberto.</div>'}`;
+}
+
+function cartaoLista(r) {
+  return `
+    <article class="cartao-rk" data-concluido="${r.concluido ? 1 : 0}">
+      <h3><a href="#/meta/${r.entregavel_id}">${esc(r.titulo)}</a></h3>
+      <p class="cartao-de">${esc(r.entregavel_nome)}</p>
+      <div class="mini">
+        <div class="barra"><i style="--pct:${r.pct}%"></i></div>
+        <span>${r.concluido ? 'Concluído' : r.pct + '%'}</span>
+      </div>
+      <div class="medidinhas">
+        <span class="medidinha">${dia(r.periodo_inicio)} a ${dia(r.periodo_fim)}</span>
+        ${r.medidas.map(m => `<span class="medidinha">${esc(m.rotulo)}
+          <b>${m.valor_atual === '' || m.valor_atual === null ? '—'
+            : (m.tipo === 'dinheiro' ? brl(m.valor_atual)
+            : m.tipo === 'marco' ? (Number(m.valor_atual) === 1 ? 'feito' : 'não')
+            : m.valor_atual + (m.tipo === 'percentual' ? '%' : (m.unidade || '')))}</b></span>`).join('')}
+      </div>
+    </article>`;
+}
+
+// ------------------------------------------------------- meu histórico
+
+async function telaHistorico() {
+  mostrarTopo('/historico');
+  carregando('Buscando seus check-ins');
+
+  let d;
+  try { d = await api('meu.historico'); }
+  catch (e) { tela.innerHTML = `<div class="erro">${esc(e.message)}</div>`; return; }
+
+  const porDia = {};
+  d.historico.forEach(h => {
+    const dt = new Date(h.quando);
+    const chave = isNaN(dt) ? 'Sem data'
+      : `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}/${dt.getFullYear()}`;
+    (porDia[chave] = porDia[chave] || []).push(h);
+  });
+
+  tela.innerHTML = `
+    <h1 class="titulo-pagina">Meu histórico</h1>
+    <p class="linha-fina">Cada check-in que você registrou, do mais recente para o mais antigo.</p>
+    ${d.historico.length
+      ? Object.entries(porDia).map(([dataTxt, itens]) => `
+        <div class="grupo-dia"><h3>${esc(dataTxt)}</h3>
+          <ol class="linha-tempo">${itens.map(h => `<li>
+            <div class="lt-cabeca">
+              <time>${quando(h.quando).split(' às ')[1] || ''}</time>
+              <b>${esc(h.rk_titulo)}</b>
+              ${h.concluido ? '<span class="tag tag-ok">Concluído</span>'
+                            : `<span class="tag">${h.progresso_pct}%</span>`}
+              <a class="rk-sub" href="#/meta/${h.entregavel_id}">${esc(h.entregavel_nome)}</a>
+            </div>
+            ${h.valor ? `<p><span class="lt-rot">Valores</span>${esc(h.valor)}</p>` : ''}
+            ${h.feito ? `<p><span class="lt-rot">Feito</span>${esc(h.feito)}</p>` : ''}
+            ${h.falta ? `<p><span class="lt-rot">Falta</span>${esc(h.falta)}</p>` : ''}
+          </li>`).join('')}</ol>
+        </div>`).join('')
+      : '<div class="vazio">Você ainda não registrou nenhum check-in.</div>'}`;
+}
+
+
 // ----------------------------------------------------------------- rotas
 
 function rotear() {
@@ -863,8 +1347,11 @@ function rotear() {
   if (!sessao.token && rota !== '/entrar') { location.hash = '#/entrar'; return; }
 
   if (rota === '/entrar') return telaEntrar();
-  if (rota === '/senha') return telaSenha();
+  if (rota === '/senha') return telaSenha(true);
+  if (rota === '/acesso') return telaSenha(false);
   if (rota === '/painel') return telaPainel();
+  if (rota === '/resultados') return telaResultados();
+  if (rota === '/historico') return telaHistorico();
   if (rota === '/novo') return telaNovo();
 
   const m = rota.match(/^\/meta\/([^/]+)(?:\/([^/]+))?$/);
