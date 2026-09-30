@@ -712,7 +712,7 @@ a { color: var(--azul); }
 .mf-peso input { width: 56px; }
 .mf-fixo { font-size: 13.5px; color: var(--cinza); }
 .mf-dica { margin: 7px 0 0; }
-.btn-x-fixo { opacity: 1; justify-self: end; }
+
 
 .rk-notas {
   display: grid;
@@ -1088,3 +1088,10 @@ a { color: var(--azul); }
   .tipos { grid-template-columns: 1fr; }
   .barra-periodo { flex-direction: column; align-items: flex-start; gap: 12px; }
 }
+
+/* Botão de remover que fica sempre visível. Precisa vir DEPOIS de .btn-x e
+   com dois seletores, senão a regra opacity:0 de .btn-x vence pela ordem. */
+.btn-x.btn-x-fixo { opacity: 1; justify-self: end; }
+
+/* O rótulo "Concluído?" salva sozinho, então merece parecer clicável. */
+.seg label span { transition: background .12s ease, color .12s ease; }
