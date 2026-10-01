@@ -236,12 +236,14 @@ async function _blocoResetSenha() {
 
 // ------------------------------------------------------------------ painel
 
-async function telaPainel() {
+let mesPainel = '';
+
+async function telaPainel(silencioso) {
   mostrarTopo('/painel');
-  carregando('Abrindo seu painel');
+  if (!silencioso) carregando('Abrindo seu painel');
 
   let d;
-  try { d = await api('painel'); }
+  try { d = await api('painel', mesPainel ? { mes: mesPainel } : {}); }
   catch (e) { tela.innerHTML = `<div class="erro">${esc(e.message)}</div>`; return; }
 
   const comCiclo = d.entregaveis.filter(e => e.ciclo);
@@ -271,13 +273,26 @@ async function telaPainel() {
 
     <div class="cabeca-secao">
       <h2>Seus entregáveis</h2>
-      <a class="btn btn-vazio btn-p" href="#/novo">Novo entregável</a>
+      <div class="cabeca-acoes">
+        ${d.meses && d.meses.length > 1 ? `
+          <select id="selMes" class="sel-periodo">
+            <option value="">Período em andamento</option>
+            ${d.meses.map(m => `<option value="${m}" ${m === d.mes ? 'selected' : ''}>${esc(nomeDoMes(m))}</option>`).join('')}
+          </select>` : ''}
+        <a class="btn btn-vazio btn-p" href="#/novo">Novo entregável</a>
+      </div>
     </div>
     ${d.entregaveis.length
       ? `<div class="trilha">${d.entregaveis.map(faixa).join('')}</div>`
       : '<div class="vazio">Nenhum entregável por aqui. Crie o primeiro no botão acima.</div>'}`;
 
   ligarPainel();
+}
+
+/** '2026-09' vira 'setembro de 2026'. */
+function nomeDoMes(m) {
+  const [a, mm] = String(m).split('-');
+  return `${MESES[+mm - 1]} de ${a}`;
 }
 
 function faixa(e) {
@@ -294,8 +309,11 @@ function faixa(e) {
           ${c ? `<span class="per-datas">${esc(janela(c.periodo_inicio, c.periodo_fim))}</span>
                  <span class="per-falta">${faltam(c.periodo_fim)}</span>`
               : '<span class="per-datas">Sem período aberto</span>'}
-          ${c && e.pode_ajustar && c.status === 'aberto'
+          ${c && e.pode_ajustar
             ? `<button class="btn-link" data-ajustar="${c.id}" data-ini="${c.periodo_inicio}" data-fim="${c.periodo_fim}">Ajustar período</button>`
+            : ''}
+          ${c && e.pode_reabrir
+            ? `<button class="btn-link" data-reabrir="${c.id}">Reabrir para editar</button>`
             : ''}
         </div>
         <div class="per-editor" id="ed-${c ? c.id : ''}" data-nao-navegar></div>
@@ -313,11 +331,25 @@ function faixa(e) {
 }
 
 function ligarPainel() {
+  document.getElementById('selMes')?.addEventListener('change', (ev) => {
+    mesPainel = ev.target.value;
+    telaPainel(true);
+  });
+
   document.querySelectorAll('.faixa').forEach(f =>
     f.addEventListener('click', (ev) => {
       if (ev.target.closest('[data-nao-navegar], a, button, input')) return;
       location.hash = f.dataset.ir;
     }));
+
+  document.querySelectorAll('[data-reabrir]').forEach(b =>
+    b.addEventListener('click', (ev) => comBotao(ev.target, 'Reabrindo', async () => {
+      try {
+        await api('periodo.reabrir', { ciclo_id: b.dataset.reabrir });
+        avisar('Período reaberto. Você já pode registrar o que faltou.');
+        telaPainel(true);
+      } catch (e) { avisar(e.message); }
+    })));
 
   document.querySelectorAll('[data-ajustar]').forEach(b =>
     b.addEventListener('click', () =>
@@ -534,11 +566,15 @@ function desenharMeta() {
           </div>
           ${M.pode_gerir ? `<div class="barra-periodo-acoes">
             <button class="btn-link" id="btnAjustar">Ajustar datas</button>
-            <button class="btn-link" id="btnNovoPer">Iniciar novo período</button></div>` : ''}
+            <button class="btn-link" id="btnNovoPer">Iniciar novo período</button>
+            <button class="btn-link" id="btnEncerrar">Encerrar</button></div>` : ''}
         </div>
         <div id="edPeriodo"></div>
 
-        ${passado ? `<div class="faixa-aviso">Este período foi encerrado. Você está vendo o registro de como ele terminou.</div>` : ''}
+        ${passado ? `<div class="faixa-aviso faixa-aviso-acao">
+          <span>Este período foi encerrado. Você está vendo o registro de como ele terminou.</span>
+          ${M.pode_reabrir ? '<button class="btn btn-p" id="btnReabrir">Reabrir para editar</button>' : ''}
+        </div>` : ''}
 
         ${c ? `<div class="resumo-exec">
           <div class="barra"><i style="--pct:${c.progresso_pct}%"></i></div>
@@ -854,6 +890,25 @@ function ligarMeta() {
     editorPeriodo($('#edPeriodo'), M.ciclo.id, M.ciclo.periodo_inicio, M.ciclo.periodo_fim, recarregar));
 
   $('#btnNovoPer')?.addEventListener('click', formaNovoPeriodo);
+
+  $('#btnReabrir')?.addEventListener('click', (ev) => comBotao(ev.target, 'Reabrindo', async () => {
+    try {
+      await api('periodo.reabrir', { ciclo_id: M.ciclo.id });
+      avisar('Período reaberto. Registre o que faltou e encerre de novo quando terminar.');
+      recarregar();
+    } catch (e) { avisar(e.message); }
+  }));
+
+  $('#btnEncerrar')?.addEventListener('click', (ev) => {
+    if (!confirm('Encerrar este período? Ele passa a somente leitura, mas pode ser reaberto depois.')) return;
+    comBotao(ev.target, 'Encerrando', async () => {
+      try {
+        await api('periodo.encerrar', { ciclo_id: M.ciclo.id });
+        avisar('Período encerrado.');
+        recarregar();
+      } catch (e) { avisar(e.message); }
+    });
+  });
 
   on('[data-lancar]', (ev) => {
     const id = ev.target.dataset.lancar;
