@@ -105,6 +105,9 @@ function mostrarTopo(rotaAtual) {
   topo.hidden = !u;
   if (!u) return;
   topoNome.textContent = u.nome;
+  const link = document.getElementById('linkEquipe');
+  if (link) link.hidden = !(u.papeis || []).some(p => p === 'coordenador' || p === 'diretor');
+
   document.querySelectorAll('#menu a').forEach(a => {
     const dele = rotaAtual && rotaAtual.indexOf(a.dataset.rota) === 0;
     if (dele) a.setAttribute('aria-current', 'page');
@@ -558,6 +561,8 @@ function desenharMeta() {
                 ? '<div style="margin-top:14px"><button class="btn btn-vazio btn-p" id="btnCopiar">Trazer os do período anterior</button></div>' : ''}
             </div>`}
 
+        ${blocoFeedback()}
+
         <div class="cabeca-secao cabeca-historico"><h2>Check-ins do período</h2></div>
         ${M.historico.length ? `<ol class="linha-tempo">${M.historico.map(itemHistorico).join('')}</ol>`
           : '<p class="rk-sub">Cada vez que alguém registra uma atualização num resultado-chave, ela aparece aqui.</p>'}
@@ -696,6 +701,30 @@ function _dadosDoCartao(card, id) {
   };
 }
 
+/** Conversa do período: gestor comenta, o dono responde, tudo fica no ciclo. */
+function blocoFeedback() {
+  const lista = M.feedbacks || [];
+  if (!lista.length && !M.pode_comentar) return '';
+
+  return `
+    <div class="cabeca-secao cabeca-feedback"><h2>Conversa do período</h2></div>
+    ${lista.length ? `<div class="conversa">
+      ${lista.map(f => `
+        <div class="fala" data-meu="${f.meu ? 1 : 0}">
+          <div class="fala-topo">
+            <b>${esc(f.por)}</b><time>${quando(f.quando)}</time>
+            ${f.meu ? `<button class="btn-link link-perigo fala-x" data-apagar-fb="${f.id}">Excluir</button>` : ''}
+          </div>
+          <p>${esc(f.texto)}</p>
+        </div>`).join('')}
+    </div>` : '<p class="rk-sub">Nenhum comentário neste período.</p>'}
+    ${M.pode_comentar ? `
+      <div class="fala-nova">
+        <textarea id="fbTexto" rows="2" placeholder="Escreva um comentário sobre este período"></textarea>
+        <button class="btn btn-p" id="fbEnviar">Enviar</button>
+      </div>` : ''}`;
+}
+
 function cartaoRk(rk) {
   const ed = M.pode_editar;
 
@@ -707,7 +736,8 @@ function cartaoRk(rk) {
             <h3>${esc(rk.titulo)}</h3>
             ${rk.concluido ? '<span class="tag tag-ok">Concluído</span>' : ''}
           </div>
-          <p class="rk-sub">${dia(rk.periodo_inicio)} a ${dia(rk.periodo_fim)}</p>
+          <p class="rk-sub">${dia(rk.periodo_inicio)} a ${dia(rk.periodo_fim)}${
+            rk.atravessa ? ' <span class="chip chip-ok">continua no próximo período</span>' : ''}</p>
           ${rk.tags && rk.tags.length ? `<div class="chips">${rk.tags.map(t =>
             `<span class="chip-tag" data-tipo="${t.tipo}">${esc(t.nome)}</span>`).join('')}</div>` : ''}
         </div>
@@ -850,6 +880,22 @@ function ligarMeta() {
   });
 
   $('#btnNovaEv')?.addEventListener('click', formaEvidencia);
+
+  $('#fbEnviar')?.addEventListener('click', (ev) => comBotao(ev.target, 'Enviando', async () => {
+    const campo = document.getElementById('fbTexto');
+    if (!campo.value.trim()) { avisar('Escreva o comentário antes de enviar.'); return; }
+    try {
+      await api('feedback.salvar', { ciclo_id: M.ciclo.id, texto: campo.value });
+      avisar('Comentário enviado.');
+      recarregar();
+    } catch (e) { avisar(e.message); }
+  }));
+
+  on('[data-apagar-fb]', async (ev) => {
+    if (!confirm('Excluir este comentário?')) return;
+    try { await api('feedback.excluir', { id: ev.target.dataset.apagarFb }); recarregar(); }
+    catch (e) { avisar(e.message); }
+  });
 
   on('[data-apagar-ev]', async (ev) => {
     if (!confirm('Excluir esta evidência?')) return;
@@ -1340,6 +1386,286 @@ async function telaHistorico() {
 }
 
 
+// ------------------------------------------------------------- equipe
+
+const JANELAS = [
+  { chave: 'atual', texto: 'Período em andamento', params: {} },
+  { chave: '3', texto: 'Últimos 3 meses', params: { meses: 3 } },
+  { chave: '6', texto: 'Últimos 6 meses', params: { meses: 6 } },
+  { chave: '12', texto: 'Últimos 12 meses', params: { meses: 12 } }
+];
+
+let janelaEquipe = 'atual';
+
+async function telaEquipe(silencioso) {
+  mostrarTopo('/equipe');
+  if (!silencioso) carregando('Reunindo a equipe');
+
+  const j = JANELAS.find(x => x.chave === janelaEquipe) || JANELAS[0];
+
+  let d;
+  try { d = await api('equipe.painel', j.params); }
+  catch (e) { tela.innerHTML = `<div class="erro">${esc(e.message)}</div>`; return; }
+
+  const r = d.resumo;
+
+  tela.innerHTML = `
+    <section class="abertura">
+      <h1>Equipe</h1>
+      <p class="periodo">${esc(d.janela.rotulo)} — ${dia(d.janela.inicio)} a ${dia(d.janela.fim)}</p>
+      <div class="leituras">
+        <div class="leitura">
+          <p class="rotulo">Execução média</p>
+          <div class="leitura-num exec">${r.execucao}%</div>
+          <div class="barra-clara"><i style="--pct:${r.execucao}%"></i></div>
+          <p class="leitura-sub">${r.pessoas} pessoas, ${r.entregaveis} entregáveis</p>
+        </div>
+        <div class="leitura">
+          <p class="rotulo">Metas batidas</p>
+          <div class="leitura-num res">${r.metas_batidas} de ${r.metas_total}</div>
+          <p class="leitura-sub">contando todos os períodos da janela</p>
+        </div>
+      </div>
+    </section>
+
+    <div class="cabeca-secao">
+      <h2>Quem precisa de atenção primeiro</h2>
+      <select id="selJanela" class="sel-periodo">
+        ${JANELAS.map(x => `<option value="${x.chave}" ${x.chave === janelaEquipe ? 'selected' : ''}>${x.texto}</option>`).join('')}
+      </select>
+    </div>
+
+    ${d.pessoas.length ? d.pessoas.map(linhaPessoa).join('')
+      : '<div class="vazio">Ninguém com entregável nesta janela.</div>'}
+
+    <div class="em-obras">
+      <p class="rotulo">Gráfico de evolução</p>
+      <p>Em desenvolvimento. Vai mostrar a curva de execução e de resultado de cada pessoa ao longo dos períodos, assim que houver períodos fechados suficientes para a linha fazer sentido.</p>
+    </div>`;
+
+  document.getElementById('selJanela').addEventListener('change', (ev) => {
+    janelaEquipe = ev.target.value;
+    telaEquipe(true);
+  });
+}
+
+function linhaPessoa(p) {
+  return `
+    <article class="pessoa">
+      <div class="pessoa-cabeca">
+        <div>
+          <h3>${esc(p.nome)}</h3>
+          <p class="rk-sub">${p.papeis.filter(x => x !== 'colaborador').join(', ') || 'colaborador'}</p>
+        </div>
+        <div class="pessoa-nums">
+          <div><span class="pessoa-num">${p.execucao}%</span><span class="rotulo">execução</span></div>
+          <div><span class="pessoa-num ouro">${p.metas_batidas}/${p.metas_total}</span><span class="rotulo">metas</span></div>
+        </div>
+      </div>
+      <div class="pessoa-metas">
+        ${p.entregaveis.map(e => {
+          const a = e.atual;
+          return `<a class="mini-meta" href="#/meta/${e.id}" data-nivel="${a ? a.resultado_nivel : 'nao_atingida'}">
+            <span class="mini-nome">${esc(e.nome)}</span>
+            <span class="mini-per">${a ? `${dia(a.inicio)} a ${dia(a.fim)}` : ''}${
+              e.periodos_total > 1 ? ` e mais ${e.periodos_total - 1}` : ''}</span>
+            <span class="mini-barra"><i style="--pct:${a ? a.progresso_pct : 0}%"></i></span>
+            <span class="mini-pct">${a ? a.progresso_pct : 0}%</span>
+            <span class="mini-rk">${a ? `${a.rks_concluidos}/${a.rks_total}` : '0/0'}</span>
+            <span class="mini-selo" data-nivel="${a ? a.resultado_nivel : 'nao_atingida'}">${
+              NIVEIS[a ? a.resultado_nivel : 'nao_atingida']}</span>
+          </a>`;
+        }).join('')}
+      </div>
+    </article>`;
+}
+
+// ---------------------------------------------------------- relatório
+
+let relatorio = null;
+
+async function telaRelatorio() {
+  mostrarTopo('/relatorio');
+  carregando('Preparando o relatório');
+
+  let op;
+  try { op = await api('relatorio.opcoes'); }
+  catch (e) { tela.innerHTML = `<div class="erro">${esc(e.message)}</div>`; return; }
+
+  const mes = mesAtual();
+
+  tela.innerHTML = `
+    <h1 class="titulo-pagina">Relatório do período</h1>
+    <p class="linha-fina">O consolidado de um intervalo, para levar para a reunião ou para fora do sistema.</p>
+
+    <div class="filtros">
+      ${op.pessoas.length > 1 ? `
+        <div class="campo"><label for="relQuem">Pessoa</label>
+          <select id="relQuem">${op.pessoas.map(p =>
+            `<option value="${p.id}" ${p.id === sessao.usuario.id ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}
+          </select></div>` : ''}
+      <div class="campo"><label for="relIni">De</label><input id="relIni" type="date" value="${mes.inicio}"></div>
+      <div class="campo"><label for="relFim">Até</label><input id="relFim" type="date" value="${mes.fim}"></div>
+      <button class="btn" id="relGerar">Gerar</button>
+    </div>
+
+    <div id="saidaRel"></div>`;
+
+  document.getElementById('relGerar').addEventListener('click', (ev) =>
+    comBotao(ev.target, 'Gerando', gerarRelatorio));
+
+  gerarRelatorio();
+}
+
+async function gerarRelatorio() {
+  const saida = document.getElementById('saidaRel');
+  saida.innerHTML = '<p class="carregando">Montando…</p>';
+
+  try {
+    relatorio = await api('relatorio.gerar', {
+      usuario_id: document.getElementById('relQuem')?.value,
+      inicio: document.getElementById('relIni').value,
+      fim: document.getElementById('relFim').value
+    });
+  } catch (e) {
+    saida.innerHTML = `<div class="erro">${esc(e.message)}</div>`;
+    return;
+  }
+
+  const d = relatorio, r = d.resumo;
+
+  saida.innerHTML = `
+    <div class="rel-cabeca">
+      <div>
+        <h2>${esc(d.pessoa.nome)}</h2>
+        <p class="rk-sub">${dia(d.janela.inicio)} a ${dia(d.janela.fim)} — ${r.periodos} ${r.periodos === 1 ? 'período' : 'períodos'}</p>
+      </div>
+      <button class="btn btn-vazio" id="relCsv" ${r.periodos ? '' : 'disabled'}>Baixar CSV</button>
+    </div>
+
+    <div class="rel-numeros">
+      ${[['Execução média', r.execucao + '%'], ['Metas batidas', r.metas_batidas + ' de ' + r.periodos],
+         ['Resultados-chave', r.rks_concluidos + ' de ' + r.rks],
+         ['Evidências', r.evidencias], ['Check-ins', r.checkins]]
+        .map(([t, v]) => `<div class="rel-num"><span>${v}</span><p class="rotulo">${t}</p></div>`).join('')}
+    </div>
+
+    ${d.blocos.length ? d.blocos.map(blocoRelatorio).join('')
+      : '<div class="vazio">Nenhum período nesse intervalo.</div>'}`;
+
+  document.getElementById('relCsv')?.addEventListener('click', baixarCsv);
+}
+
+function blocoRelatorio(b) {
+  const linha = (rot, val) => val ? `<p class="rel-linha"><span class="lt-rot">${rot}</span>${esc(val)}</p>` : '';
+
+  return `
+    <section class="rel-bloco">
+      <div class="rel-bloco-topo" data-nivel="${b.resultado_nivel}">
+        <div>
+          <h3>${esc(b.entregavel)}</h3>
+          <p class="rk-sub">${dia(b.periodo_inicio)} a ${dia(b.periodo_fim)}${b.status === 'aberto' ? ' (em andamento)' : ''}</p>
+        </div>
+        <div class="rel-selo">
+          <span class="selo-nivel">${NIVEIS[b.resultado_nivel]}</span>
+          <span class="rk-sub">execução ${b.progresso_pct}%</span>
+        </div>
+      </div>
+
+      ${b.indicadores.length ? `
+        <p class="rotulo rel-rotulo">Indicadores</p>
+        <table class="rel-tabela"><tbody>
+          ${b.indicadores.map(m => `<tr><td>${esc(m.rotulo)}</td>
+            <td class="num">${m.valor_atual === null ? '—' : esc(String(m.valor_atual)) + esc(m.unidade || '')}</td>
+            <td class="rk-sub">${m.lancamentos.length} lançamento${m.lancamentos.length === 1 ? '' : 's'}</td></tr>`).join('')}
+        </tbody></table>` : ''}
+
+      ${b.resultados_chave.length ? `
+        <p class="rotulo rel-rotulo">Resultados-chave</p>
+        ${b.resultados_chave.map(r => `
+          <div class="rel-rk">
+            <div class="rel-rk-topo">
+              <b>${esc(r.titulo)}</b>
+              <span class="${r.concluido ? 'tag tag-ok' : 'tag'}">${r.concluido ? 'Concluído' : r.pct + '%'}</span>
+              <span class="rk-sub">${dia(r.periodo_inicio)} a ${dia(r.periodo_fim)}</span>
+            </div>
+            ${r.medidas.length ? `<table class="rel-tabela"><tbody>
+              ${r.medidas.map(m => `<tr><td>${esc(m.rotulo)}</td>
+                <td class="num">${m.tipo === 'marco' ? (Number(m.valor_atual) === 1 ? 'feito' : 'não')
+                  : (m.valor_atual === '' || m.valor_atual === null ? '—'
+                    : (m.tipo === 'dinheiro' ? brl(m.valor_atual) : esc(String(m.valor_atual)) + esc(m.unidade || '')))}</td>
+                <td class="rk-sub">${esc(alvoTexto(m))}</td>
+                <td class="num">${m.pct}%</td></tr>`).join('')}
+            </tbody></table>` : ''}
+            ${linha('Feito', r.feito)}${linha('Falta', r.falta)}
+          </div>`).join('')}` : ''}
+
+      ${b.evidencias.length ? `
+        <p class="rotulo rel-rotulo">Evidências</p>
+        ${b.evidencias.map(e => `<div class="rel-ev">
+          <b>${esc(e.titulo)}</b> <span class="rk-sub">${dia(e.data)} — ${esc(TIPOS_EVIDENCIA[e.tipo] || 'Nota')}</span>
+          ${e.resultado ? `<p class="rel-linha">${esc(e.resultado)}</p>` : ''}</div>`).join('')}` : ''}
+
+      ${b.conversa.length ? `
+        <p class="rotulo rel-rotulo">Conversa</p>
+        ${b.conversa.map(f => `<p class="rel-linha"><span class="lt-rot">${esc(f.por)}</span>${esc(f.texto)}</p>`).join('')}` : ''}
+    </section>`;
+}
+
+/**
+ * CSV em formato longo: uma linha por item, com a seção na coluna.
+ * Ponto e vírgula e BOM porque é o que o Excel em português abre sem
+ * perguntar nada e sem quebrar acento.
+ */
+function baixarCsv() {
+  if (!relatorio) return;
+  const d = relatorio;
+  const linhas = [['Pessoa', 'Entregável', 'Período', 'Seção', 'Item', 'Detalhe', 'Valor', 'Situação']];
+
+  d.blocos.forEach(b => {
+    const per = `${b.periodo_inicio} a ${b.periodo_fim}`;
+    const base = [d.pessoa.nome, b.entregavel, per];
+
+    linhas.push([...base, 'Resumo', 'Execução', '', b.progresso_pct + '%', NIVEIS[b.resultado_nivel]]);
+
+    b.indicadores.forEach(m => linhas.push([...base, 'Indicador', m.rotulo, m.unidade || '',
+      m.valor_atual === null ? '' : m.valor_atual, m.lancamentos.length + (m.lancamentos.length === 1 ? ' lançamento' : ' lançamentos')]));
+
+    b.resultados_chave.forEach(r => {
+      linhas.push([...base, 'Resultado-chave', r.titulo,
+        `${r.periodo_inicio} a ${r.periodo_fim}`, r.pct + '%',
+        r.concluido ? 'Concluído' : 'Em andamento']);
+      r.medidas.forEach(m => linhas.push([...base, 'Medida', r.titulo + ' — ' + m.rotulo,
+        alvoTexto(m), m.valor_atual === '' || m.valor_atual === null ? '' : m.valor_atual, m.pct + '%']));
+      if (r.feito) linhas.push([...base, 'Feito', r.titulo, '', r.feito, '']);
+      if (r.falta) linhas.push([...base, 'Falta', r.titulo, '', r.falta, '']);
+    });
+
+    b.evidencias.forEach(e => linhas.push([...base, 'Evidência', e.titulo,
+      TIPOS_EVIDENCIA[e.tipo] || 'Nota', e.resultado || e.conteudo || '', e.data]));
+
+    b.checkins.forEach(h => linhas.push([...base, 'Check-in', h.rk_titulo,
+      h.quando, (h.feito || '') + (h.falta ? ' | Falta: ' + h.falta : ''),
+      h.concluido ? 'Concluído' : h.progresso_pct + '%']));
+
+    b.conversa.forEach(f => linhas.push([...base, 'Conversa', f.por, f.quando, f.texto, '']));
+  });
+
+  const escapa = (v) => {
+    const t = String(v ?? '').replace(/"/g, '""').replace(/\r?\n/g, ' ');
+    return /[";]/.test(t) ? `"${t}"` : t;
+  };
+  const csv = '\ufeff' + linhas.map(l => l.map(escapa).join(';')).join('\r\n');
+
+  const nome = `4metas_${d.pessoa.nome.toLowerCase().replace(/[^a-z0-9]+/g, '-')}_${d.janela.inicio}_a_${d.janela.fim}.csv`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+  a.download = nome;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  avisar('CSV baixado.');
+}
+
 // ----------------------------------------------------------------- rotas
 
 function rotear() {
@@ -1353,6 +1679,8 @@ function rotear() {
   if (rota === '/resultados') return telaResultados();
   if (rota === '/historico') return telaHistorico();
   if (rota === '/novo') return telaNovo();
+  if (rota === '/equipe') return telaEquipe();
+  if (rota === '/relatorio') return telaRelatorio();
 
   const m = rota.match(/^\/meta\/([^/]+)(?:\/([^/]+))?$/);
   if (m) return telaMeta(m[1], m[2]);
