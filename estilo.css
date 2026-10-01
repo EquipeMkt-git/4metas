@@ -1304,3 +1304,6 @@ a { color: var(--azul); }
 
 /* O rótulo "Concluído?" salva sozinho, então merece parecer clicável. */
 .seg label span { transition: background .12s ease, color .12s ease; }
+
+.cabeca-acoes { display: flex; align-items: center; gap: 12px; }
+.faixa-aviso-acao { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
